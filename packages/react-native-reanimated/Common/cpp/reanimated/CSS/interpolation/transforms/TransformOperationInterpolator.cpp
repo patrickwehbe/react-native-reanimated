@@ -5,6 +5,8 @@
 #include <reanimated/CSS/interpolation/transforms/operations/skew.h>
 #include <reanimated/CSS/interpolation/transforms/operations/translate.h>
 
+#include <cmath>
+#include <limits>
 #include <utility>
 
 namespace reanimated::css {
@@ -31,14 +33,21 @@ std::unique_ptr<StyleOperation> TransformOperationInterpolator<PerspectiveOperat
     const std::shared_ptr<StyleOperation> &from,
     const std::shared_ptr<StyleOperation> &to,
     const StyleOperationsInterpolationContext & /* context */) const {
-  // TODO - check if this implementation is correct
   const auto &fromValue = std::static_pointer_cast<PerspectiveOperation>(from)->value;
   const auto &toValue = std::static_pointer_cast<PerspectiveOperation>(to)->value;
 
-  if (fromValue.value == 0)
-    return std::make_unique<PerspectiveOperation>(toValue);
-  if (toValue.value == 0)
-    return std::make_unique<PerspectiveOperation>(fromValue);
+  // The "no perspective" default is infinity, so interpolating the raw distance
+  // gives inf + progress * (d - inf) == NaN, which poisons the matrix and hides
+  // the view. Perspective enters the matrix as -1/d, so we interpolate in
+  // reciprocal space (1/inf == 0) to stay finite, matching the spec's matrix
+  // interpolation: https://www.w3.org/TR/css-transforms-2/#interpolation-of-transforms
+  if (std::isinf(fromValue.value) || std::isinf(toValue.value)) {
+    const double fromReciprocal = 1.0 / fromValue.value;
+    const double toReciprocal = 1.0 / toValue.value;
+    const double reciprocal = fromReciprocal + progress * (toReciprocal - fromReciprocal);
+    return std::make_unique<PerspectiveOperation>(
+        reciprocal == 0.0 ? std::numeric_limits<double>::infinity() : 1.0 / reciprocal);
+  }
 
   return std::make_unique<PerspectiveOperation>(fromValue.interpolate(progress, toValue));
 }
